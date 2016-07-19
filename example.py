@@ -66,6 +66,8 @@ NEXT_LONG = 0
 auto_refresh = 0
 default_step = 0.001
 api_endpoint = None
+LAST_ACTIVE_TIME = time.time()
+ABORT_CYCLE = False
 pokemons = {}
 gyms = {}
 pokestops = {}
@@ -547,6 +549,14 @@ def login(args):
     return api_endpoint, access_token, profile_response
 
 def main():
+    global NEXT_LAT, NEXT_LONG, LAST_ACTIVE_TIME, ABORT_CYCLE
+
+    if time.time() - LAST_ACTIVE_TIME > 15 * 60:
+        print('[*] Zzzzz...')
+        set_location_coords(origin_lat, origin_lon, 0)
+        register_background_thread()
+        return
+
     full_path = os.path.realpath(__file__)
     (path, filename) = os.path.split(full_path)
 
@@ -615,7 +625,11 @@ def main():
         print('Completed: ' + str(
             ((step+1) + pos * .25 - .25) / (steplimit2) * 100) + '%')
 
-    global NEXT_LAT, NEXT_LONG
+        if ABORT_CYCLE:
+            ABORT_CYCLE = False
+            print('[!] Cycle has been aborted')
+            break
+
     if (NEXT_LAT and NEXT_LONG and
             (NEXT_LAT != FLOAT_LAT or NEXT_LONG != FLOAT_LONG)):
         print('Update to next location %f, %f' % (NEXT_LAT, NEXT_LONG))
@@ -744,7 +758,7 @@ def register_background_thread(initial_registration=False):
 
     else:
         debug('register_background_thread: queueing')
-        search_thread = threading.Timer(30, main)  # delay, in seconds
+        search_thread = threading.Timer(10, main)  # delay, in seconds
 
     search_thread.daemon = True
     search_thread.name = 'search_thread'
@@ -786,6 +800,8 @@ def config():
 
 @app.route('/')
 def fullmap():
+    global LAST_ACTIVE_TIME
+    LAST_ACTIVE_TIME = time.time()
     clear_stale_pokemons()
 
     return render_template(
@@ -794,17 +810,19 @@ def fullmap():
 
 @app.route('/next_loc')
 def next_loc():
-    global NEXT_LAT, NEXT_LONG
+    global NEXT_LAT, NEXT_LONG, ABORT_CYCLE
 
     lat = flask.request.args.get('lat', '')
     lon = flask.request.args.get('lon', '')
     if not (lat and lon):
         print('[-] Invalid next location: %s,%s' % (lat, lon))
+        return 'fail'
     else:
         print('[+] Saved next location as %s,%s' % (lat, lon))
-        NEXT_LAT = float(lat)
-        NEXT_LONG = float(lon)
+        set_location('{},{}'.format(lat, lon))
+        ABORT_CYCLE = True
         return 'ok'
+
 
 
 def get_pokemarkers():
@@ -827,8 +845,12 @@ def get_pokemarkers():
         	dateoutput = datestr.strftime("%I:%M%p").lstrip('0')
         pokemon['disappear_time_formatted'] = dateoutput
 
+        pokemon['img_id'] = "%03d" % pokemon['id']
+
         LABEL_TMPL = u'''
-<div><b>{name}</b><span> - </span><small><a href='http://www.pokemon.com/us/pokedex/{id}' target='_blank' title='View in Pokedex'>#{id}</a></small></div>
+<div>
+<img src="https://assets.pokemon.com/assets/cms2/img/pokedex/full/{img_id}.png" style="float:left; max-width: 100px;"  />
+<b>{name}</b><span> - </span><small><a href='http://www.pokemon.com/us/pokedex/{id}' target='_blank' title='View in Pokedex'>#{id}</a></small></div>
 <div>Disappears at - {disappear_time_formatted} <span class='label-countdown' disappears-at='{disappear_time}'></span></div>
 <div><a href='https://www.google.com/maps/dir/Current+Location/{lat},{lng}' target='_blank' title='View in Maps'>Get Directions</a></div>
 '''
